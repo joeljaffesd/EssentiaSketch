@@ -1,11 +1,12 @@
 // Global variables
 let audioManager;
 let essentiaWorker; // Changed from essentiaAnalyzer to essentiaWorker
+let cacheManager; // Handles localStorage caching
 let audioPlayerUIs = [];
 let visualMode = 'energy-mood'; // 'energy-mood', 'circle-of-fifths', 'song-structure'
 let modeDropdown;
 let isLoading = true;
-let processingStatus = { current: 0, total: 0 }; // Track processing progress
+let processingStatus = { current: 0, total: 0, cached: 0 }; // Track processing progress
 
 // Colors inspired by jaffx.audio (modern dark theme with orange accents)
 const colors = {
@@ -24,6 +25,7 @@ async function setup() {
   // Initialize managers
   audioManager = new AudioManager();
   essentiaWorker = new EssentiaWorkerManager(); // Use worker instead of analyzer
+  cacheManager = new CacheManager(); // Initialize cache manager
   
   // Create mode selector dropdown
   createModeSelector();
@@ -151,6 +153,10 @@ async function initializeApp() {
     await essentiaWorker.initialize();
     console.log('✅ Essentia Worker initialized');
     
+    // Display cache stats
+    const cacheStats = cacheManager.getCacheStats();
+    console.log(`📊 Cache stats: ${cacheStats.totalEntries} entries, ${cacheStats.cacheSizeMB} MB`);
+    
     // Load audio dataset
     console.log('⏳ Loading audio dataset...');
     const audioFiles = await audioManager.loadAudioDataset();
@@ -159,18 +165,38 @@ async function initializeApp() {
     // Set up processing status
     processingStatus.total = audioFiles.length;
     processingStatus.current = 0;
+    processingStatus.cached = 0;
     
-    // Process first file synchronously to show initial UI
+    // Check which files are already cached
+    const uncachedFiles = [];
+    const cachedFiles = [];
+    
+    audioFiles.forEach(audioFile => {
+      if (cacheManager.hasCachedAnalysis(audioFile)) {
+        // Load analysis from cache
+        audioFile.analysis = cacheManager.getCachedAnalysis(audioFile);
+        cachedFiles.push(audioFile);
+        processingStatus.cached++;
+      } else {
+        uncachedFiles.push(audioFile);
+      }
+    });
+    
+    console.log(`✅ Found ${cachedFiles.length} cached files, ${uncachedFiles.length} need analysis`);
+    
+    // Process first file (cached or uncached)
     console.log('⏳ Processing first audio file...');
-    await processFirstAudioFile(audioFiles);
-    processingStatus.current = 1;
+    if (audioFiles.length > 0) {
+      await processFirstAudioFile(audioFiles, cachedFiles, uncachedFiles);
+      processingStatus.current = 1;
+    }
     
     // Show the UI after first file is ready
     isLoading = false;
     console.log('✅ UI ready - processing remaining files in background...');
     
     // Process remaining files asynchronously
-    processRemainingAudioFiles(audioFiles);
+    processRemainingAudioFiles(audioFiles, cachedFiles, uncachedFiles);
     
   } catch (error) {
     console.error('❌ Error initializing app:', error);
@@ -178,22 +204,95 @@ async function initializeApp() {
   }
 }
 
-async function processFirstAudioFile(audioFiles) {
+async function processFirstAudioFile(audioFiles, cachedFiles, uncachedFiles) {
   // Initialize the array
   audioPlayerUIs = [];
   
   if (audioFiles.length === 0) return;
   
   const audioFile = audioFiles[0];
-  console.log(`🔄 Analyzing first file: ${audioFile.name}...`);
   
-  try {
-    // Load audio buffer
-    const audioBuffer = await audioManager.loadAudioBuffer(audioFile);
+  // Check if first file is cached
+  if (cacheManager.hasCachedAnalysis(audioFile)) {
+    console.log(`✅ Using cached analysis for first file: ${audioFile.name}`);
+    audioFile.analysis = cacheManager.getCachedAnalysis(audioFile);
+  } else {
+    console.log(`🔄 Analyzing first file: ${audioFile.name}...`);
     
-    // Analyze with Essentia Worker
-    audioFile.analysis = await essentiaWorker.analyzeAudio(audioBuffer, audioFile.name);
-    console.log(`✅ First file analyzed:`, audioFile.analysis);
+    try {
+      // Load audio buffer
+      const audioBuffer = await audioManager.loadAudioBuffer(audioFile);
+      
+      // Analyze with Essentia Worker
+      audioFile.analysis = await essentiaWorker.analyzeAudio(audioBuffer, audioFile.name);
+      console.log(`✅ First file analyzed:`, audioFile.analysis);
+      
+      // Cache the analysis
+      cacheManager.setCachedAnalysis(audioFile, audioFile.analysis);
+      
+    } catch (error) {
+      console.error(`❌ Error processing first file:`, error);
+      // Use mock analysis as fallback
+      audioFile.analysis = essentiaWorker.generateMockAnalysis();
+      // Don't cache mock analysis
+    }
+  }
+  
+  // Create UI component
+  const ui = new AudioPlayerUI(audioManager, 0, 0, 280, 80);
+  const playerData = {
+    ui: ui,
+    audioFile: audioFile,
+    visualPosition: { x: width / 2, y: height / 2 }
+  };
+  
+  audioPlayerUIs.push(playerData);
+  
+  // Position the first element
+  positionSinglePlayer(playerData, 0);
+}
+
+async function processRemainingAudioFiles(audioFiles, cachedFiles, uncachedFiles) {
+  // Process remaining files one at a time (skipping first)
+  for (let i = 1; i < audioFiles.length; i++) {
+    // Yield to UI before processing each file
+    await yieldToUI();
+    
+    const audioFile = audioFiles[i];
+    
+    // Check if this file is cached
+    if (cacheManager.hasCachedAnalysis(audioFile)) {
+      console.log(`✅ [${i}/${audioFiles.length - 1}] Using cached: ${audioFile.name}`);
+      // Analysis already loaded in initializeApp
+      
+    } else {
+      try {
+        console.log(`🔄 [${i}/${audioFiles.length - 1}] Analyzing: ${audioFile.name}...`);
+        
+        // Load audio buffer
+        const audioBuffer = await audioManager.loadAudioBuffer(audioFile);
+        
+        // Yield to UI after loading
+        await yieldToUI();
+        
+        // Analyze with Essentia Worker (runs in background thread)
+        audioFile.analysis = await essentiaWorker.analyzeAudio(audioBuffer, audioFile.name);
+        
+        // Cache the analysis
+        cacheManager.setCachedAnalysis(audioFile, audioFile.analysis);
+        
+        // Yield to UI after analysis
+        await yieldToUI();
+        
+        console.log(`✅ [${i}/${audioFiles.length - 1}] Complete: ${audioFile.name}`);
+        
+      } catch (error) {
+        console.error(`❌ Error processing ${audioFile.name}:`, error);
+        // Use mock analysis as fallback
+        audioFile.analysis = essentiaWorker.generateMockAnalysis();
+        // Don't cache mock analysis
+      }
+    }
     
     // Create UI component
     const ui = new AudioPlayerUI(audioManager, 0, 0, 280, 80);
@@ -203,93 +302,17 @@ async function processFirstAudioFile(audioFiles) {
       visualPosition: { x: width / 2, y: height / 2 }
     };
     
+    // Add to array
     audioPlayerUIs.push(playerData);
     
-    // Position the first element
-    positionSinglePlayer(playerData, 0);
+    // Update progress
+    processingStatus.current = i + 1;
     
-  } catch (error) {
-    console.error(`❌ Error processing first file:`, error);
-    // Use mock analysis as fallback
-    audioFile.analysis = essentiaWorker.generateMockAnalysis();
-    
-    const ui = new AudioPlayerUI(audioManager, 0, 0, 280, 80);
-    const playerData = {
-      ui: ui,
-      audioFile: audioFile,
-      visualPosition: { x: width / 2, y: height / 2 }
-    };
-    
-    audioPlayerUIs.push(playerData);
-    positionSinglePlayer(playerData, 0);
-  }
-}
-
-async function processRemainingAudioFiles(audioFiles) {
-  // Process remaining files one at a time (skipping first)
-  for (let i = 1; i < audioFiles.length; i++) {
-    // Yield to UI before processing each file
-    await yieldToUI();
-    
-    const audioFile = audioFiles[i];
-    
-    try {
-      console.log(`🔄 [${i}/${audioFiles.length - 1}] Analyzing: ${audioFile.name}...`);
-      
-      // Load audio buffer
-      const audioBuffer = await audioManager.loadAudioBuffer(audioFile);
-      
-      // Yield to UI after loading
-      await yieldToUI();
-      
-      // Analyze with Essentia Worker (runs in background thread)
-      audioFile.analysis = await essentiaWorker.analyzeAudio(audioBuffer, audioFile.name);
-      
-      // Yield to UI after analysis
-      await yieldToUI();
-      
-      console.log(`✅ [${i}/${audioFiles.length - 1}] Complete: ${audioFile.name}`);
-      
-      // Create UI component
-      const ui = new AudioPlayerUI(audioManager, 0, 0, 280, 80);
-      const playerData = {
-        ui: ui,
-        audioFile: audioFile,
-        visualPosition: { x: width / 2, y: height / 2 }
-      };
-      
-      // Add to array
-      audioPlayerUIs.push(playerData);
-      
-      // Update progress
-      processingStatus.current = i + 1;
-      
-      // Position ONLY this new element (don't reposition existing ones)
-      positionSinglePlayer(playerData, audioPlayerUIs.length - 1);
-      
-    } catch (error) {
-      console.error(`❌ Error processing ${audioFile.name}:`, error);
-      // Use mock analysis as fallback
-      audioFile.analysis = essentiaWorker.generateMockAnalysis();
-      
-      const ui = new AudioPlayerUI(audioManager, 0, 0, 280, 80);
-      const playerData = {
-        ui: ui,
-        audioFile: audioFile,
-        visualPosition: { x: width / 2, y: height / 2 }
-      };
-      
-      audioPlayerUIs.push(playerData);
-      
-      // Update progress
-      processingStatus.current = i + 1;
-      
-      // Position ONLY this new element
-      positionSinglePlayer(playerData, audioPlayerUIs.length - 1);
-    }
+    // Position ONLY this new element (don't reposition existing ones)
+    positionSinglePlayer(playerData, audioPlayerUIs.length - 1);
   }
   
-  console.log('🎉 All audio files processed!');
+  console.log(`🎉 All audio files processed! (${processingStatus.cached} from cache, ${audioFiles.length - processingStatus.cached} analyzed)`);
 }
 
 // Helper function to yield control back to the browser for UI updates
@@ -541,15 +564,21 @@ function drawLoadingScreen() {
   fill(colors.text);
   textAlign(CENTER);
   textSize(24);
-  text('Loading EssentiaTest...', width/2, height/2 - 20);
+  text('Loading EssentiaTest...', width/2, height/2 - 40);
   
   textSize(16);
   fill(colors.textMuted);
-  text('Analyzing audio dataset with Essentia.js', width/2, height/2 + 20);
+  text('Analyzing audio dataset with Essentia.js', width/2, height/2);
+  
+  // Show cache info if available
+  if (cacheManager && processingStatus.cached > 0) {
+    fill(colors.accent);
+    text(`${processingStatus.cached} files loaded from cache`, width/2, height/2 + 30);
+  }
   
   // Loading animation
   const loadingDots = '.'.repeat((frameCount % 60) / 20 + 1);
-  text(loadingDots, width/2 + 200, height/2 + 20);
+  text(loadingDots, width/2 + 200, height/2);
 }
 
 function drawInterface() {
@@ -562,7 +591,9 @@ function drawInterface() {
   // Mode indicator and stats
   textSize(14);
   fill(colors.textMuted);
-  text(`Mode: ${getModeName(visualMode)} | Files: ${audioManager.audioFiles.length}`, 20, height - 30);
+  const cacheStats = cacheManager ? cacheManager.getCacheStats() : { totalEntries: 0 };
+  const analyzedCount = cacheStats.totalEntries;
+  text(`Mode: ${getModeName(visualMode)} | Analyzed: ${analyzedCount}/${audioManager.audioFiles.length}`, 20, height - 30);
   
   if (audioManager.currentPlayingAudio) {
     text(`♪ Playing: ${audioManager.currentPlayingAudio.name}`, 20, height - 10);
