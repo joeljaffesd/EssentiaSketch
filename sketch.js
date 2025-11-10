@@ -7,6 +7,7 @@ let visualMode = 'circle-of-fifths'; // 'circle-of-fifths', 'energy-mood', 'song
 let modeDropdown;
 let isLoading = true;
 let processingStatus = { current: 0, total: 0, cached: 0 }; // Track processing progress
+let selectedKeyFilter = null; // When set, filters Circle of Fifths to show only that key
 
 // Colors inspired by jaffx.audio (modern dark theme with orange accents)
 const colors = {
@@ -36,6 +37,9 @@ async function setup() {
 
 function draw() {
   background(colors.background);
+  
+  // Reset cursor each frame (will be changed by hover effects)
+  cursor(ARROW);
   
   if (isLoading) {
     drawLoadingScreen();
@@ -114,6 +118,7 @@ function createModeSelector() {
       visualMode = mode.value;
       dropdownButton.html(mode.label + ' ▼');
       dropdownMenu.style('display', 'none');
+      selectedKeyFilter = null; // Clear key filter when changing modes
       repositionAudioPlayers();
       console.log('Mode changed to:', mode.value);
     });
@@ -483,30 +488,52 @@ function repositionAudioPlayers() {
           break;
           
         case 'circle-of-fifths':
-          // Get key position (0-11)
-          const keyPosition = essentiaWorker.keyToCirclePosition(analysis.key);
-          const sliceAngle = TWO_PI / 12;
-          const baseAngle = (keyPosition * sliceAngle) - PI/2;
-          
-          // Use keyStrength (confidence) to determine radius
-          const minRadius = maxRadius * 0.2; // Inner boundary (low confidence)
-          const maxRadiusForUI = maxRadius * 0.7; // Outer boundary (high confidence, before key labels)
-          const keyStrength = analysis.keyStrength || 0.5; // Default to 0.5 if missing
-          const confidenceRadius = minRadius + keyStrength * (maxRadiusForUI - minRadius);
-          
-          // Add small random variation to angle within the slice
-          const slicePadding = sliceAngle * 0.1;
-          const randomAngle = baseAngle + (Math.random() - 0.5) * (sliceAngle - slicePadding * 2);
-          
-          x = centerX + cos(randomAngle) * confidenceRadius;
-          y = centerY + sin(randomAngle) * confidenceRadius;
-          
-          // Add offset on subsequent attempts (for overlap avoidance)
-          if (attempts > 0) {
-            const offsetRadius = 30 * attempts;
-            const offsetAngle = randomAngle + (Math.random() - 0.5) * sliceAngle * 0.5;
-            x = centerX + cos(offsetAngle) * constrain(confidenceRadius + offsetRadius, minRadius, maxRadiusForUI);
-            y = centerY + sin(offsetAngle) * constrain(confidenceRadius + offsetRadius, minRadius, maxRadiusForUI);
+          // Check if we're in filtered mode
+          if (selectedKeyFilter) {
+            // Filter mode: distribute tracks randomly across the full circle area
+            const filteredPlayers = audioPlayerUIs.filter(pd => pd.audioFile.analysis?.key === selectedKeyFilter);
+            const indexInFiltered = filteredPlayers.indexOf(playerData);
+            
+            if (indexInFiltered >= 0 && filteredPlayers.length > 0) {
+              // Generate random position within the circle
+              // Use square root for uniform distribution in circular area
+              const randomRadius = Math.sqrt(Math.random()) * maxRadius * 0.8; // Use 80% of max radius
+              const randomAngle = Math.random() * TWO_PI;
+              
+              x = centerX + cos(randomAngle) * randomRadius;
+              y = centerY + sin(randomAngle) * randomRadius;
+            } else {
+              // This track doesn't match the filter - hide it off-screen
+              x = -1000;
+              y = -1000;
+            }
+          } else {
+            // Normal mode: position by key slice and confidence
+            // Get key position (0-11)
+            const keyPosition = essentiaWorker.keyToCirclePosition(analysis.key);
+            const sliceAngle = TWO_PI / 12;
+            const baseAngle = (keyPosition * sliceAngle) - PI/2;
+            
+            // Use keyStrength (confidence) to determine radius
+            const minRadius = maxRadius * 0.2; // Inner boundary (low confidence)
+            const maxRadiusForUI = maxRadius * 0.7; // Outer boundary (high confidence, before key labels)
+            const keyStrength = analysis.keyStrength || 0.5; // Default to 0.5 if missing
+            const confidenceRadius = minRadius + keyStrength * (maxRadiusForUI - minRadius);
+            
+            // Add small random variation to angle within the slice
+            const slicePadding = sliceAngle * 0.1;
+            const randomAngle = baseAngle + (Math.random() - 0.5) * (sliceAngle - slicePadding * 2);
+            
+            x = centerX + cos(randomAngle) * confidenceRadius;
+            y = centerY + sin(randomAngle) * confidenceRadius;
+            
+            // Add offset on subsequent attempts (for overlap avoidance)
+            if (attempts > 0) {
+              const offsetRadius = 30 * attempts;
+              const offsetAngle = randomAngle + (Math.random() - 0.5) * sliceAngle * 0.5;
+              x = centerX + cos(offsetAngle) * constrain(confidenceRadius + offsetRadius, minRadius, maxRadiusForUI);
+              y = centerY + sin(offsetAngle) * constrain(confidenceRadius + offsetRadius, minRadius, maxRadiusForUI);
+            }
           }
           break;
           
@@ -676,8 +703,9 @@ function drawCircleOfFifths() {
   const keys = ['C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#', 'G#', 'D#', 'A#', 'F'];
   const sliceAngle = TWO_PI / 12;
   
+  // Offset slice lines by half a slice angle so keys are centered in the whitespace
   for(let i = 0; i < keys.length; i++) {
-    let angle = (i * sliceAngle) - PI/2;
+    let angle = (i * sliceAngle) - PI/2 + sliceAngle/2; // Add half slice offset
     
     // Draw slice lines from center to edge
     stroke(colors.textMuted);
@@ -693,24 +721,50 @@ function drawCircleOfFifths() {
   noFill();
   circle(0, 0, maxRadius * 2);
   
-  // Draw key positions
+  // Draw key positions with clickable feedback (keep keys at original positions)
+  push();
+  const centerX = width / 2;
+  const centerY = height / 2;
+  
   for(let i = 0; i < keys.length; i++) {
-    let angle = (i * sliceAngle) - PI/2;
+    let angle = (i * sliceAngle) - PI/2; // Keys stay at original positions
     let x = cos(angle) * maxRadius;
     let y = sin(angle) * maxRadius;
     
-    // Key background
-    fill(colors.surface);
-    stroke(colors.primary);
-    strokeWeight(1);
-    circle(x, y, Math.max(30, maxRadius * 0.15)); // Scale circle size with radius
+    const keySize = Math.max(30, maxRadius * 0.15);
+    const screenX = centerX + x;
+    const screenY = centerY + y;
     
-    fill(colors.text);
+    // Check if mouse is hovering over this key
+    const isHovering = dist(mouseX, mouseY, screenX, screenY) < keySize / 2;
+    const isSelected = selectedKeyFilter === keys[i];
+    
+    // Key background with hover and selection effects
+    if (isSelected) {
+      fill(colors.primary);
+      stroke(colors.accent);
+      strokeWeight(3);
+    } else if (isHovering) {
+      fill(colors.primary);
+      stroke(colors.primary);
+      strokeWeight(2);
+      cursor(HAND);
+    } else {
+      fill(colors.surface);
+      stroke(colors.primary);
+      strokeWeight(1);
+    }
+    
+    circle(x, y, keySize);
+    
+    // Key text
+    fill(isSelected ? colors.background : colors.text);
     noStroke();
     textAlign(CENTER);
-    textSize(Math.max(12, maxRadius * 0.075)); // Scale text size
+    textSize(Math.max(12, maxRadius * 0.075));
     text(keys[i], x, y + 5);
   }
+  pop();
 }
 
 function drawSongStructure() {
@@ -767,6 +821,65 @@ function drawAudioPlayers() {
 }
 
 function mousePressed() {
+  // Check if we're in circle-of-fifths mode and clicking on a key
+  if (visualMode === 'circle-of-fifths') {
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const availableWidth = width - 40;
+    const availableHeight = height - 120;
+    const maxRadius = Math.min(availableWidth, availableHeight) / 2 * 0.9;
+    const keys = ['C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#', 'G#', 'D#', 'A#', 'F'];
+    const sliceAngle = TWO_PI / 12;
+    const keySize = Math.max(30, maxRadius * 0.15);
+    
+    let clickedOnKey = false;
+    
+    for (let i = 0; i < keys.length; i++) {
+      let angle = (i * sliceAngle) - PI/2;
+      let x = centerX + cos(angle) * maxRadius;
+      let y = centerY + sin(angle) * maxRadius;
+      
+      // Check if click is within this key's circle
+      if (dist(mouseX, mouseY, x, y) < keySize / 2) {
+        clickedOnKey = true;
+        
+        // If clicking on the currently selected key, clear the filter
+        if (selectedKeyFilter === keys[i]) {
+          selectedKeyFilter = null;
+          console.log('Cleared key filter');
+        } else {
+          // Otherwise, set filter to this key
+          selectedKeyFilter = keys[i];
+          console.log(`Filtering to key: ${keys[i]}`);
+        }
+        repositionAudioPlayers();
+        return true; // Handled the click
+      }
+    }
+    
+    // If we have a filter active and clicked somewhere else (not on a key), clear the filter
+    if (selectedKeyFilter && !clickedOnKey) {
+      // Check if we clicked on an audio player UI first
+      let clickedOnUI = false;
+      audioPlayerUIs.forEach(playerData => {
+        if (playerData.ui.handleClick(mouseX, mouseY, playerData.audioFile)) {
+          clickedOnUI = true;
+        }
+      });
+      
+      // Only clear filter if we didn't click on a UI element
+      if (!clickedOnUI) {
+        selectedKeyFilter = null;
+        console.log('Cleared key filter (clicked elsewhere)');
+        repositionAudioPlayers();
+        return true;
+      }
+      
+      // If we clicked on a UI, let it handle normally
+      return clickedOnUI;
+    }
+  }
+  
   // Handle clicks on audio player UIs
   let handled = false;
   
