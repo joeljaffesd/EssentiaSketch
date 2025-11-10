@@ -10,7 +10,7 @@ class CacheManager {
     // Version history:
     // - '1.0': Initial implementation with traditional MIR
     // - '2.0': ML-based mood analysis (Mood Happy/Sad/Aggressive models)
-    this.cacheVersion = '2.0';
+    this.cacheVersion = '3.0';
     
     // Load cache AFTER version is set
     this.cache = this.loadCache();

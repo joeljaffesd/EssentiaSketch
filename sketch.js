@@ -59,7 +59,7 @@ function createModeSelector() {
   dropdownContainer.style('position', 'absolute');
 
   // Create dropdown button
-  let dropdownButton = createButton('Energy/Mood Grid ▼');
+  let dropdownButton = createButton('Tempo/Mood Grid ▼');
   dropdownButton.parent(dropdownContainer);
   dropdownButton.style('background-color', colors.surface);
   dropdownButton.style('color', colors.text);
@@ -89,7 +89,7 @@ function createModeSelector() {
 
   // Create menu options
   const modes = [
-    { label: 'Energy/Mood Grid', value: 'energy-mood' },
+    { label: 'Tempo/Mood Grid', value: 'energy-mood' },
     { label: 'Circle of Fifths', value: 'circle-of-fifths' },
     { label: 'Song Structure', value: 'song-structure' }
   ];
@@ -349,7 +349,11 @@ function positionSinglePlayer(playerData, index) {
         const gridWidth = availableWidth * 0.8;
         const gridHeight = availableHeight * 0.8;
         
-        x = centerX + (analysis.energy - 0.5) * gridWidth;
+        // Map tempo to X axis (60-180 BPM range)
+        const tempoNormalized = (analysis.tempo - 60) / 120; // Normalize tempo from 60-180 BPM to 0-1
+        const tempoConstrained = constrain(tempoNormalized, 0, 1); // Ensure it's within 0-1
+        
+        x = centerX + (tempoConstrained - 0.5) * gridWidth;
         y = centerY - (analysis.mood - 0.5) * gridHeight;
         
         // Add random offset on subsequent attempts
@@ -453,12 +457,16 @@ function repositionAudioPlayers() {
     do {
       switch (visualMode) {
         case 'energy-mood':
-          // Map energy (0-1) to X axis, mood (0-1) to Y axis
+          // Map tempo to X axis, mood to Y axis
           // Constrain to grid space (80% of available space)
           const gridWidth = availableWidth * 0.8;
           const gridHeight = availableHeight * 0.8;
           
-          x = centerX + (analysis.energy - 0.5) * gridWidth;
+          // Map tempo to X axis (60-180 BPM range)
+          const tempoNormalized = (analysis.tempo - 60) / 120; // Normalize tempo from 60-180 BPM to 0-1
+          const tempoConstrained = constrain(tempoNormalized, 0, 1); // Ensure it's within 0-1
+          
+          x = centerX + (tempoConstrained - 0.5) * gridWidth;
           y = centerY - (analysis.mood - 0.5) * gridHeight; // Invert Y for intuitive mapping
           
           // Add small random offset to prevent exact overlaps, but stay within grid
@@ -643,7 +651,7 @@ function drawEnergyMoodGrid() {
   strokeWeight(1);
   
   // Draw grid axes
-  line(-gridWidth/2, 0, gridWidth/2, 0); // Energy axis (horizontal)
+  line(-gridWidth/2, 0, gridWidth/2, 0); // Tempo axis (horizontal)
   line(0, -gridHeight/2, 0, gridHeight/2); // Mood axis (vertical)
   
   // Grid lines removed - keeping only axes
@@ -652,8 +660,8 @@ function drawEnergyMoodGrid() {
   fill(colors.text);
   textAlign(CENTER);
   textSize(12);
-  text('Low Energy', -gridWidth/2 - 60, 0);
-  text('High Energy', gridWidth/2 + 60, 0);
+  text('Slow (60 BPM)', -gridWidth/2 - 70, 0);
+  text('Fast (180 BPM)', gridWidth/2 + 70, 0);
   text('Sad', 0, gridHeight/2 + 30);
   text('Happy', 0, -gridHeight/2 - 30);
 }
