@@ -3,7 +3,7 @@ let audioManager;
 let essentiaWorker; // Changed from essentiaAnalyzer to essentiaWorker
 let cacheManager; // Handles localStorage caching
 let audioPlayerUIs = [];
-let visualMode = 'energy-mood'; // 'energy-mood', 'circle-of-fifths', 'song-structure'
+let visualMode = 'circle-of-fifths'; // 'circle-of-fifths', 'energy-mood', 'song-structure'
 let modeDropdown;
 let isLoading = true;
 let processingStatus = { current: 0, total: 0, cached: 0 }; // Track processing progress
@@ -59,7 +59,7 @@ function createModeSelector() {
   dropdownContainer.style('position', 'absolute');
 
   // Create dropdown button
-  let dropdownButton = createButton('Tempo/Mood Grid ▼');
+  let dropdownButton = createButton('Circle of Fifths ▼');
   dropdownButton.parent(dropdownContainer);
   dropdownButton.style('background-color', colors.surface);
   dropdownButton.style('color', colors.text);
@@ -89,8 +89,8 @@ function createModeSelector() {
 
   // Create menu options
   const modes = [
-    { label: 'Tempo/Mood Grid', value: 'energy-mood' },
     { label: 'Circle of Fifths', value: 'circle-of-fifths' },
+    { label: 'Tempo/Mood Grid', value: 'energy-mood' },
     { label: 'Song Structure', value: 'song-structure' }
   ];
 
