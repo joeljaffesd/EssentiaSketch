@@ -3,9 +3,17 @@
 class CacheManager {
   constructor() {
     this.storageKey = 'essentiaSketch_audioAnalysis';
-    this.cache = this.loadCache();
     this.maxCacheSize = 500; // Maximum number of files to cache
-    this.cacheVersion = '1.0'; // Increment this to invalidate old caches
+    
+    // === VERSION CONTROL ===
+    // Increment this version number to force cache invalidation and re-analysis
+    // Version history:
+    // - '1.0': Initial implementation with traditional MIR
+    // - '2.0': ML-based mood analysis (Mood Happy/Sad/Aggressive models)
+    this.cacheVersion = '2.0';
+    
+    // Load cache AFTER version is set
+    this.cache = this.loadCache();
   }
 
   // Load cache from localStorage
@@ -21,7 +29,8 @@ class CacheManager {
       
       // Check cache version
       if (parsed.version !== this.cacheVersion) {
-        console.log('📦 Cache version mismatch, clearing old cache');
+        console.log(`📦 Cache version mismatch (stored: ${parsed.version}, current: ${this.cacheVersion})`);
+        console.log('📦 Clearing old cache to force re-analysis with newer techniques');
         this.clearCache();
         return { version: this.cacheVersion, data: {} };
       }
